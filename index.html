@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Geohash Encode & Grid Visualizer</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen p-4">
+<h1 class="text-2xl font-bold text-cyan-400 mb-1 text-center">Geohash Encode &amp; Grid Visualizer</h1>
+<p class="text-center text-gray-400 text-sm mb-6">Encode lat/lon to Geohash, visualize bounding box and neighbors on an SVG grid</p>
+
+<div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
+  <!-- Left: Controls -->
+  <div class="space-y-4">
+    <!-- Mode tabs -->
+    <div class="flex gap-2 bg-gray-900 p-1 rounded-lg">
+      <button id="tabEncode" class="flex-1 py-1.5 rounded-md text-sm font-semibold bg-cyan-700 text-white transition">Encode</button>
+      <button id="tabDecode" class="flex-1 py-1.5 rounded-md text-sm font-semibold text-gray-400 hover:text-white transition">Decode</button>
+    </div>
+
+    <!-- Encode panel -->
+    <div id="encodePanel" class="bg-gray-900 rounded-xl border border-gray-700 p-4 space-y-3">
+      <div>
+        <label class="block text-xs text-gray-400 mb-1" for="inLat">Latitude</label>
+        <input id="inLat" type="number" step="any" value="35.6762" placeholder="-90 to 90"
+          class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-cyan-500">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1" for="inLon">Longitude</label>
+        <input id="inLon" type="number" step="any" value="139.6503" placeholder="-180 to 180"
+          class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-cyan-500">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1" for="inPrec">Precision (1–8)</label>
+        <input id="inPrec" type="range" min="1" max="8" value="5" class="w-full accent-cyan-500">
+        <div class="text-right text-cyan-300 font-mono text-xs mt-1">Precision: <span id="precLabel">5</span></div>
+      </div>
+      <button id="btnEncode" class="w-full py-2 bg-cyan-700 hover:bg-cyan-600 rounded font-semibold text-sm transition">Encode</button>
+    </div>
+
+    <!-- Decode panel -->
+    <div id="decodePanel" class="hidden bg-gray-900 rounded-xl border border-gray-700 p-4 space-y-3">
+      <div>
+        <label class="block text-xs text-gray-400 mb-1" for="inHash">Geohash string</label>
+        <input id="inHash" type="text" value="xn76gz" placeholder="e.g. xn76gz"
+          class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-cyan-500">
+      </div>
+      <button id="btnDecode" class="w-full py-2 bg-indigo-700 hover:bg-indigo-600 rounded font-semibold text-sm transition">Decode</button>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="bg-gray-900 rounded-xl border border-gray-700 p-4 space-y-2 hidden">
+      <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">Result</div>
+      <div class="space-y-1 text-sm" id="resultBody"></div>
+    </div>
+
+    <!-- Neighbors -->
+    <div id="neighborsBox" class="bg-gray-900 rounded-xl border border-gray-700 p-4 hidden">
+      <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">Neighbors</div>
+      <div id="neighborsGrid" class="grid grid-cols-3 gap-1 font-mono text-xs text-center"></div>
+    </div>
+  </div>
+
+  <!-- Right: SVG grid -->
+  <div class="bg-gray-900 rounded-xl border border-gray-700 p-4">
+    <div class="text-xs text-gray-400 uppercase tracking-wider mb-3">Bounding Box Grid</div>
+    <svg id="vizSvg" viewBox="0 0 300 300" class="w-full rounded bg-gray-800" style="aspect-ratio:1"></svg>
+    <p class="text-xs text-gray-500 mt-2 text-center">Yellow = selected cell · Teal = neighbors · Labels = geohash chars</p>
+  </div>
+</div>
+
+<script>
+const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+
+function encode(lat, lon, precision) {
+  let minLat=-90, maxLat=90, minLon=-180, maxLon=180;
+  let hash='', bits=0, bitsTotal=0, hashValue=0;
+  while (hash.length < precision) {
+    if (bitsTotal % 2 === 0) {
+      const mid=(minLon+maxLon)/2;
+      if (lon>=mid) { hashValue=(hashValue<<1)+1; minLon=mid; } else { hashValue<<=1; maxLon=mid; }
+    } else {
+      const mid=(minLat+maxLat)/2;
+      if (lat>=mid) { hashValue=(hashValue<<1)+1; minLat=mid; } else { hashValue<<=1; maxLat=mid; }
+    }
+    bits++; bitsTotal++;
+    if (bits===5) { hash+=BASE32[hashValue]; bits=0; hashValue=0; }
+  }
+  return hash;
+}
+
+function decode(hash) {
+  let minLat=-90, maxLat=90, minLon=-180, maxLon=180, isEven=true;
+  for (const c of hash) {
+    const cd = BASE32.indexOf(c);
+    if (cd === -1) throw new Error('Invalid geohash char: '+c);
+    for (let b=4; b>=0; b--) {
+      const bit=(cd>>b)&1;
+      if (isEven) { const mid=(minLon+maxLon)/2; bit ? minLon=mid : maxLon=mid; }
+      else        { const mid=(minLat+maxLat)/2; bit ? minLat=mid : maxLat=mid; }
+      isEven=!isEven;
+    }
+  }
+  return { lat:(minLat+maxLat)/2, lon:(minLon+maxLon)/2, minLat, maxLat, minLon, maxLon };
+}
+
+const NEIGHBORS = {
+  right:  { even:'bc01fg45telegramhijklmnopqrstuvwx', odd:'p0r21436x8zb9dcf5h7kjnmqesgutwvy' },
+  left:   { even:'238967debc01telegramhijklmnopqrstuvwx', odd:'14365h7k9dcfesgujnmqp0r2twvyx8zb' },
+  top:    { even:'p0r21436x8zb9dcf5h7kjnmqesgutwvy', odd:'bc01fg45telegramhijklmnopqrstuvwx' },
+  bottom: { even:'14365h7k9dcfesgujnmqp0r2twvyx8zb', odd:'238967debc01telegramhijklmnopqrstuvwx' },
+};
+const BORDERS = {
+  right:  { even:'bcfguvyz', odd:'prxz' },
+  left:   { even:'0145hjnp', odd:'028b' },
+  top:    { even:'prxz', odd:'bcfguvyz' },
+  bottom: { even:'028b', odd:'0145hjnp' },
+};
+
+// Simple neighbor using re-encode
+function neighbor(hash, dir) {
+  try {
+    const d = decode(hash);
+    const prec = hash.length;
+    const latH = (d.maxLat-d.minLat);
+    const lonH = (d.maxLon-d.minLon);
+    const dirs = { n:[latH,0], s:[-latH,0], e:[0,lonH], w:[0,-lonH], ne:[latH,lonH], nw:[latH,-lonH], se:[-latH,lonH], sw:[-latH,-lonH] };
+    const [dlat,dlon] = dirs[dir]||[0,0];
+    let nLat = d.lat+dlat, nLon = d.lon+dlon;
+    if (nLat>90||nLat<-90||nLon>180||nLon<-180) return null;
+    return encode(nLat, nLon, prec);
+  } catch { return null; }
+}
+
+function showResults(data) {
+  const rb = document.getElementById('resultBody');
+  rb.innerHTML = '';
+  for (const [k,v] of Object.entries(data)) {
+    const row = document.createElement('div');
+    row.className = 'flex justify-between gap-2';
+    row.innerHTML = `<span class="text-gray-400">${escapeHtml(k)}</span><span class="font-mono text-cyan-300 text-right break-all">${escapeHtml(String(v))}</span>`;
+    rb.appendChild(row);
+  }
+  document.getElementById('results').classList.remove('hidden');
+}
+
+function visualize(hash) {
+  const svg = document.getElementById('vizSvg');
+  svg.innerHTML = '';
+  try {
+    const center = decode(hash);
+    const prec = hash.length;
+    // Draw 5x5 grid of cells around center
+    const latStep = center.maxLat-center.minLat;
+    const lonStep = center.maxLon-center.minLon;
+
+    const gridSize = 5;
+    const cellPx = 300/gridSize;
+
+    for (let row=0; row<gridSize; row++) {
+      for (let col=0; col<gridSize; col++) {
+        const dRow = 2-row; const dCol = col-2;
+        const cLat = center.lat + dRow*latStep;
+        const cLon = center.lon + dCol*lonStep;
+        let gh = null;
+        try { gh = encode(cLat,cLon,prec); } catch {}
+
+        const isCenter = row===2&&col===2;
+        const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+        rect.setAttribute('x', col*cellPx+1);
+        rect.setAttribute('y', row*cellPx+1);
+        rect.setAttribute('width', cellPx-2);
+        rect.setAttribute('height', cellPx-2);
+        rect.setAttribute('rx','3');
+        rect.setAttribute('fill', isCenter ? '#ca8a04' : (dRow===0||dCol===0) && Math.abs(dRow)<=1&&Math.abs(dCol)<=1 ? '#0e7490' : '#1f2937');
+        rect.setAttribute('stroke','#374151');
+        svg.appendChild(rect);
+
+        if (gh) {
+          const text = document.createElementNS('http://www.w3.org/2000/svg','text');
+          text.setAttribute('x', col*cellPx+cellPx/2);
+          text.setAttribute('y', row*cellPx+cellPx/2+4);
+          text.setAttribute('text-anchor','middle');
+          text.setAttribute('font-size', prec<=4?'10':'8');
+          text.setAttribute('font-family','monospace');
+          text.setAttribute('fill', isCenter?'#fff':'#9ca3af');
+          text.textContent = gh;
+          svg.appendChild(text);
+        }
+      }
+    }
+
+    // Show neighbors
+    const dirs = ['nw','n','ne','w','—','e','sw','s','se'];
+    const nGrid = document.getElementById('neighborsGrid');
+    nGrid.innerHTML = '';
+    const nMap = {
+      nw: neighbor(hash,'nw'), n: neighbor(hash,'n'), ne: neighbor(hash,'ne'),
+      w:  neighbor(hash,'w'),  e: neighbor(hash,'e'),
+      sw: neighbor(hash,'sw'), s: neighbor(hash,'s'), se: neighbor(hash,'se'),
+    };
+    dirs.forEach(d => {
+      const cell = document.createElement('div');
+      cell.className = 'py-1 px-1 rounded ' + (d==='—'?'bg-yellow-700 text-white':'bg-gray-800 text-teal-300');
+      cell.textContent = d==='—' ? hash : (nMap[d]||'—');
+      nGrid.appendChild(cell);
+    });
+    document.getElementById('neighborsBox').classList.remove('hidden');
+  } catch(e) {
+    svg.innerHTML = `<text x="150" y="150" text-anchor="middle" fill="#ef4444" font-size="12">${escapeHtml(e.message)}</text>`;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+document.getElementById('inPrec').addEventListener('input', e => {
+  document.getElementById('precLabel').textContent = e.target.value;
+});
+
+document.getElementById('tabEncode').addEventListener('click', () => {
+  document.getElementById('encodePanel').classList.remove('hidden');
+  document.getElementById('decodePanel').classList.add('hidden');
+  document.getElementById('tabEncode').classList.add('bg-cyan-700','text-white');
+  document.getElementById('tabEncode').classList.remove('text-gray-400');
+  document.getElementById('tabDecode').classList.remove('bg-indigo-700','text-white');
+  document.getElementById('tabDecode').classList.add('text-gray-400');
+});
+document.getElementById('tabDecode').addEventListener('click', () => {
+  document.getElementById('decodePanel').classList.remove('hidden');
+  document.getElementById('encodePanel').classList.add('hidden');
+  document.getElementById('tabDecode').classList.add('bg-indigo-700','text-white');
+  document.getElementById('tabDecode').classList.remove('text-gray-400');
+  document.getElementById('tabEncode').classList.remove('bg-cyan-700','text-white');
+  document.getElementById('tabEncode').classList.add('text-gray-400');
+});
+
+document.getElementById('btnEncode').addEventListener('click', () => {
+  const lat = parseFloat(document.getElementById('inLat').value);
+  const lon = parseFloat(document.getElementById('inLon').value);
+  const prec = parseInt(document.getElementById('inPrec').value);
+  if (isNaN(lat)||isNaN(lon)||lat<-90||lat>90||lon<-180||lon>180) { alert('Invalid coordinates'); return; }
+  const hash = encode(lat,lon,prec);
+  const box = decode(hash);
+  const precInfo = [[5000,5000],[1250,625],[156,156],[39,20],[5,5],[1.2,0.6],[0.15,0.15],[0.019,0.019]];
+  const [latErr,lonErr] = precInfo[prec-1]||[0,0];
+  showResults({
+    'Geohash': hash,
+    'Precision': prec,
+    'Latitude': lat.toFixed(6),
+    'Longitude': lon.toFixed(6),
+    'SW corner': `${box.minLat.toFixed(5)}, ${box.minLon.toFixed(5)}`,
+    'NE corner': `${box.maxLat.toFixed(5)}, ${box.maxLon.toFixed(5)}`,
+    'Cell size (approx)': `±${latErr}m lat, ±${lonErr}m lon`,
+  });
+  visualize(hash);
+});
+
+document.getElementById('btnDecode').addEventListener('click', () => {
+  const hash = document.getElementById('inHash').value.trim().toLowerCase();
+  if (!hash) { alert('Enter a geohash'); return; }
+  try {
+    const r = decode(hash);
+    showResults({
+      'Geohash': hash,
+      'Latitude': r.lat.toFixed(7),
+      'Longitude': r.lon.toFixed(7),
+      'Min Lat': r.minLat.toFixed(7),
+      'Max Lat': r.maxLat.toFixed(7),
+      'Min Lon': r.minLon.toFixed(7),
+      'Max Lon': r.maxLon.toFixed(7),
+    });
+    visualize(hash);
+  } catch(e) { alert(e.message); }
+});
+
+// Default run
+document.getElementById('btnEncode').click();
+</script>
+</body>
+</html>
